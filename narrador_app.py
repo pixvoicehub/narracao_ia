@@ -13,7 +13,7 @@ import google.generativeai as genai
 # é receber um texto final, um ID de voz e o nome do modelo de TTS a ser
 # usado (Pro ou Flash), e retornar o arquivo de áudio WAV correspondente.
 #
-# VERSÃO: 3.0 - Versão final com sintaxe correta da API e código limpo.
+# VERSÃO: 3.1 - Utiliza a função 'text_to_speech' com a sintaxe correta.
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
@@ -71,25 +71,20 @@ def generate_audio_endpoint():
     else:
         tts_model_to_use = requested_model
 
-    # 2. Comunicação com a API de TTS (SINTAXE CORRETA E MODERNA)
-    # ----------------------------------------------------------
+    # 2. Comunicação com a API de TTS (SINTAXE CORRETA)
+    # ----------------------------------------------------
     try:
         genai.configure(api_key=api_key)
         
-        # Instanciamos o modelo generativo diretamente com o nome do modelo TTS.
-        model = genai.GenerativeModel(model_name=tts_model_to_use)
-
-        # A chamada para gerar o áudio é feita através de 'generate_content'.
-        # O SDK sabe que é uma tarefa de TTS porque o modelo é de TTS.
-        response = model.generate_content(
-            text_to_narrate,
-            generation_config=genai.types.GenerationConfig(
-                # A voz é especificada aqui dentro da configuração
-                voice=voice_name
-            )
+        # [CORREÇÃO] A chamada para TTS é feita diretamente através da função 'text_to_speech'.
+        # Ela recebe o modelo, o texto e a voz como parâmetros diretos.
+        response = genai.text_to_speech(
+            model=tts_model_to_use,
+            text=text_to_narrate,
+            voice=voice_name
         )
         
-        # A API mais recente retorna o áudio diretamente no atributo 'audio'.
+        # A resposta desta função já contém os dados de áudio.
         if not hasattr(response, 'audio') or not hasattr(response.audio, 'data'):
             return jsonify({"error": "A API não retornou dados de áudio válidos. Verifique o texto e o nome da voz."}), 500
             
