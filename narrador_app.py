@@ -4,26 +4,21 @@ import struct
 from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
 import google.generativeai as genai
+from google.generativeai import types
 
 # =========================================================================
 # --- INICIALIZAÇÃO E CONFIGURAÇÃO DA APLICAÇÃO FLASK ---
 #
 # NOME DO ARQUIVO: narrador_app.py
 #
-# VERSÃO: 15.0 - Versão final, construída com base nos resultados do
-# teste de diagnóstico, usando a sintaxe exata para a biblioteca do Render.
+# VERSÃO: 15.0 - Versão definitiva que combina a inicialização moderna
+# com a estrutura de configuração de áudio original e funcional,
+# resolvendo o erro 'response modalities (TEXT) is not supported'.
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
 
-# --- Lista de modelos de TTS permitidos ---
-ALLOWED_TTS_MODELS = [
-    'models/gemini-2.5-pro-preview-tts',
-    'models/gemini-2.5-flash-preview-tts'
-]
-DEFAULT_TTS_MODEL = 'models/gemini-2.5-pro-preview-tts'
-
-# --- Funções Auxiliares de Áudio (Mantidas por segurança) ---
+# --- Funções Auxiliares de Áudio (do seu código original funcional) ---
 def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     parameters = parse_audio_mime_type(mime_type)
     bits_per_sample = parameters.get("bits_per_sample", 16); sample_rate = parameters.get("rate", 24000); num_channels = 1; data_size = len(audio_data); bytes_per_sample = bits_per_sample // 8; block_align = num_channels * bytes_per_sample; byte_rate = sample_rate * block_align; chunk_size = 36 + data_size
@@ -48,10 +43,12 @@ def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
 
 @application.route('/')
 def home():
+    """Rota raiz para uma verificação simples de status."""
     return "Serviço Ator de IA (narrador-python-api) está online."
 
 @application.route('/health', methods=['GET'])
 def health_check():
+    """Rota de Health Check para serviços de monitoramento."""
     return "API is awake and healthy.", 200
 
 # -------------------------------------------------------------------------
@@ -60,41 +57,44 @@ def health_check():
 @application.route('/api/generate-audio', methods=['POST'])
 def generate_audio_endpoint():
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key: return jsonify({"error": "Configuração do servidor incompleta."}), 500
+    if not api_key: return jsonify({"error": "Configuração do servidor incompleta: Chave da API ausente."}), 500
     data = request.get_json()
-    if not data: return jsonify({"error": "Requisição inválida."}), 400
+    if not data: return jsonify({"error": "Requisição inválida, corpo JSON ausente."}), 400
     text_to_narrate = data.get('text'); voice_name = data.get('voice')
-    requested_model = data.get('model', DEFAULT_TTS_MODEL)
     if not text_to_narrate or not voice_name: return jsonify({"error": "Os campos 'text' e 'voice' são obrigatórios."}), 400
-    if requested_model not in ALLOWED_TTS_MODELS: tts_model_to_use = DEFAULT_TTS_MODEL
-    else: tts_model_to_use = requested_model
 
     try:
         genai.configure(api_key=api_key)
         
+        # [FOCO NA ESTABILIDADE] Usa apenas o modelo Pro.
+        tts_model_to_use = 'models/gemini-2.5-pro-preview-tts'
+        
+        # 1. A inicialização do modelo é moderna.
         model = genai.GenerativeModel(tts_model_to_use)
 
-        # [A SINTAXE CORRETA, BASEADA NOS TESTES]
-        # A configuração é um dicionário Python simples, SEM 'response_modality'.
-        generation_config = {
-            "speech_config": {
-                "voice_config": {
-                    "prebuilt_voice_config": {
-                        "voice_name": voice_name
-                    }
-                }
-            }
-        }
+        # 2. O conteúdo é preparado como um objeto 'Part', que é a forma correta
+        #    para a estrutura de configuração que a API espera.
+        contents = [types.Part.from_text(text_to_narrate)]
         
-        # O conteúdo é a string de texto pura, sem 'types.Part' ou 'types.Content'.
-        response = model.generate_content(
-            text_to_narrate,
+        # 3. [A CHAVE DA CORREÇÃO] A configuração DEVE ser um objeto `types.GenerateContentConfig`
+        #    e DEVE incluir `response_modalities` para especificar que queremos APENAS áudio.
+        generation_config = types.GenerateContentConfig(
+            response_modalities=[types.ResponseModality.AUDIO],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name)
+                )
+            ),
+        )
+
+        # 4. A chamada de streaming usa o modelo moderno com a configuração correta.
+        stream = model.generate_content(
+            contents=contents,
             generation_config=generation_config,
             stream=True
         )
         
-        audio_buffer = bytearray()
-        audio_mime_type = "audio/L16;rate=24000"
+        audio_buffer = bytearray(); audio_mime_type = "audio/L16;rate=24000"
         
         for chunk in stream:
             if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
@@ -102,15 +102,13 @@ def generate_audio_endpoint():
                 if hasattr(part, 'inline_data') and hasattr(part.inline_data, 'data'):
                     inline_data = part.inline_data
                     audio_buffer.extend(inline_data.data)
-                    if hasattr(inline_data, 'mime_type'):
-                        audio_mime_type = inline_data.mime_type
+                    if hasattr(inline_data, 'mime_type'): audio_mime_type = inline_data.mime_type
 
-        if not audio_buffer:
-            return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio)."}), 500
-        
+        if not audio_buffer: return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio)."}), 500
+
         wav_data = convert_to_wav(bytes(audio_buffer), audio_mime_type)
         response_to_send = make_response(send_file(io.BytesIO(wav_data), mimetype='audio/wav', as_attachment=False))
-        response_to_send.headers['X-Model-Used'] = tts_model_to_use
+        response_to_send.headers['X-Model-Used'] = "Pro"
         return response_to_send
 
     except Exception as e:
