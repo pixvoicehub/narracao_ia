@@ -13,13 +13,20 @@ from google.generativeai import types
 #
 # OBJETIVO: Este é o microsserviço "Ator de IA".
 #
-# VERSÃO: 8.0 - Versão final que combina a inicialização moderna da API
-# com a estrutura de configuração de áudio original e funcional.
+# VERSÃO: 9.0 - Versão definitiva com a sintaxe correta e funcional
+# para a biblioteca google-generativeai atual instalada no Render.
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
 
-# --- Funções Auxiliares de Áudio (do seu código original funcional) ---
+# --- Lista de modelos de TTS permitidos ---
+ALLOWED_TTS_MODELS = [
+    'models/gemini-2.5-pro-preview-tts',
+    'models/gemini-2.5-flash-preview-tts'
+]
+DEFAULT_TTS_MODEL = 'models/gemini-2.5-pro-preview-tts'
+
+# --- Funções Auxiliares de Áudio (Mantidas para garantir a formatação WAV) ---
 def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     parameters = parse_audio_mime_type(mime_type)
     bits_per_sample = parameters.get("bits_per_sample", 16)
@@ -55,7 +62,6 @@ def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
             except (ValueError, IndexError): pass
     return {"bits_per_sample": bits_per_sample, "rate": rate}
 
-
 # =========================================================================
 # --- ROTAS DA API ---
 # =========================================================================
@@ -76,7 +82,7 @@ def health_check():
 @application.route('/api/generate-audio', methods=['POST'])
 def generate_audio_endpoint():
     """
-    Recebe um texto e uma voz, e retorna o áudio em WAV.
+    Recebe um texto final, um ID de voz e o modelo de TTS, e retorna o áudio em WAV.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -88,24 +94,27 @@ def generate_audio_endpoint():
         
     text_to_narrate = data.get('text')
     voice_name = data.get('voice')
+    requested_model = data.get('model', DEFAULT_TTS_MODEL)
 
     if not text_to_narrate or not voice_name:
         return jsonify({"error": "Os campos 'text' e 'voice' são obrigatórios."}), 400
 
+    if requested_model not in ALLOWED_TTS_MODELS:
+        tts_model_to_use = DEFAULT_TTS_MODEL
+    else:
+        tts_model_to_use = requested_model
+
     try:
         genai.configure(api_key=api_key)
         
-        # [FOCO NA ESTABILIDADE] Usando apenas o modelo Pro que sabemos que funciona.
-        tts_model_to_use = 'models/gemini-2.5-pro-preview-tts'
-        
-        # A inicialização do modelo é moderna.
+        # [SINTAXE FINAL E CORRETA]
+        # 1. Instancia o modelo moderno
         model = genai.GenerativeModel(tts_model_to_use)
 
-        # O conteúdo é preparado da forma que a configuração de stream espera.
-        contents = [types.Part.from_text(text_to_narrate)]
+        # 2. O conteúdo é passado diretamente, sem 'types.Part' ou 'types.Content'
+        contents = [text_to_narrate]
         
-        # [A CHAVE DA CORREÇÃO] Usamos a estrutura de configuração de áudio
-        # do seu código original, que é a correta para esta versão da biblioteca.
+        # 3. A configuração de áudio usa a estrutura original, que é a correta
         generation_config = types.GenerateContentConfig(
             response_modalities=[types.ResponseModality.AUDIO],
             speech_config=types.SpeechConfig(
@@ -115,7 +124,7 @@ def generate_audio_endpoint():
             ),
         )
 
-        # A chamada de streaming usa o modelo moderno com a configuração correta.
+        # 4. A chamada de streaming usa o modelo moderno com a configuração correta
         stream = model.generate_content(
             contents=contents,
             generation_config=generation_config,
@@ -137,7 +146,7 @@ def generate_audio_endpoint():
         if not audio_buffer:
             return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio após streaming)."}), 500
 
-        # Usa as funções auxiliares originais para garantir a formatação correta.
+        # Usa as funções auxiliares originais para garantir a formatação correta do WAV
         wav_data = convert_to_wav(bytes(audio_buffer), audio_mime_type)
         
         response_to_send = make_response(send_file(io.BytesIO(wav_data), mimetype='audio/wav', as_attachment=False))
