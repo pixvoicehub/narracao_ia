@@ -16,7 +16,7 @@ from google.generativeai import types
 # voz e o nome do modelo de TTS a ser usado (Pro ou Flash), e retornar
 # o arquivo de áudio WAV correspondente.
 # =========================================================================
-app = Flask(__name__)
+application = Flask(__name__)
 # Habilita CORS para permitir requisições do seu orquestrador PHP
 CORS(app, origins="*", expose_headers=['X-Model-Used'])
 
@@ -172,4 +172,4 @@ def generate_audio_endpoint():
 # --- EXECUÇÃO DA APLICAÇÃO ---
 # =========================================================================
 if __name__ == '__main__':
-    app.run(debug=True)
+    application.run(debug=True)
