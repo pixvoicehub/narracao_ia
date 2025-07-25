@@ -18,7 +18,7 @@ from google.generativeai import types
 # =========================================================================
 application = Flask(__name__)
 # Habilita CORS para permitir requisições do seu orquestrador PHP
-CORS(app, origins="*", expose_headers=['X-Model-Used'])
+CORS(application, origins="*", expose_headers=['X-Model-Used'])
 
 # [NOVO] Lista de modelos de TTS permitidos para validação de segurança
 ALLOWED_TTS_MODELS = [
@@ -74,12 +74,12 @@ def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
 # --- ROTAS DA API ---
 # =========================================================================
 
-@app.route('/')
+@application.route('/')
 def home():
     """Rota raiz para uma verificação simples de status."""
     return "Serviço Ator de IA (narrador-python-api) está online."
 
-@app.route('/health', methods=['GET'])
+@application.route('/health', methods=['GET'])
 def health_check():
     """Rota de Health Check para serviços de monitoramento."""
     return "API is awake and healthy.", 200
@@ -87,7 +87,7 @@ def health_check():
 # -------------------------------------------------------------------------
 # ROTA PRINCIPAL: GERAÇÃO DE ÁUDIO (TEXT-TO-SPEECH)
 # -------------------------------------------------------------------------
-@app.route('/api/generate-audio', methods=['POST'])
+@application.route('/api/generate-audio', methods=['POST'])
 def generate_audio_endpoint():
     """
     Recebe um texto final, um ID de voz e o modelo de TTS a ser usado,
