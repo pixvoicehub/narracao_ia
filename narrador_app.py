@@ -11,8 +11,8 @@ import google.generativeai as genai
 #
 # OBJETIVO: Este é o microsserviço "Ator de IA".
 #
-# VERSÃO: 6.0 - Versão final com a sintaxe mais simples e robusta possível
-# para a API de TTS, resolvendo todos os erros de atributos.
+# VERSÃO: 7.0 - Versão final com a sintaxe mais simples e robusta
+# para a API de TTS, resolvendo todos os erros de atributos e campos.
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
@@ -68,17 +68,15 @@ def generate_audio_endpoint():
     else:
         tts_model_to_use = requested_model
 
-    # 2. Comunicação com a API de TTS (SINTAXE FINAL E SIMPLIFICADA)
+    # 2. Comunicação com a API de TTS (SINTAXE FINAL E MAIS SIMPLES)
     try:
         genai.configure(api_key=api_key)
         
         model = genai.GenerativeModel(tts_model_to_use)
 
         # [A CORREÇÃO FINAL E DEFINITIVA]
-        # A configuração agora é um dicionário Python simples, sem usar 'types'.
-        # A voz é especificada dentro de 'speech_config'.
+        # A configuração agora é um dicionário Python simples, SEM o campo 'response_modality'.
         generation_config = {
-            "response_modality": "AUDIO",
             "speech_config": {
                 "voice_config": {
                     "prebuilt_voice_config": {
@@ -88,7 +86,7 @@ def generate_audio_endpoint():
             }
         }
         
-        # O conteúdo é passado diretamente, como uma lista contendo a string.
+        # O conteúdo é passado diretamente como uma lista contendo a string.
         contents = [text_to_narrate]
 
         # A chamada de streaming usa o modelo com a configuração simplificada.
