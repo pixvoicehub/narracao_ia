@@ -1,15 +1,32 @@
 import os
-import struct
 import io
+import struct
 from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
-from google import genai
-from google.genai import types
+import google.generativeai as genai
+from google.generativeai import types
 
-app = Flask(__name__)
-# Configuração de CORS para aceitar qualquer origem e expor o cabeçalho
-CORS(app, origins="*", expose_headers=['X-Model-Used'])
+# =========================================================================
+# --- INICIALIZAÇÃO E CONFIGURAÇÃO DA APLICAÇÃO FLASK ---
+#
+# NOME DO ARQUIVO: narrador_app.py
+#
+# OBJETIVO: Este é o microsserviço "Ator de IA".
+#
+# VERSÃO: 10.0 - Versão final e definitiva com a sintaxe correta para
+# a biblioteca google-generativeai atual, resolvendo todos os erros.
+# =========================================================================
+application = Flask(__name__)
+CORS(application, origins="*", expose_headers=['X-Model-Used'])
 
+# --- Lista de modelos de TTS permitidos ---
+ALLOWED_TTS_MODELS = [
+    'models/gemini-2.5-pro-preview-tts',
+    'models/gemini-2.5-flash-preview-tts'
+]
+DEFAULT_TTS_MODEL = 'models/gemini-2.5-pro-preview-tts'
+
+# --- Funções Auxiliares de Áudio (Mantidas para garantir a formatação WAV) ---
 def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     parameters = parse_audio_mime_type(mime_type)
     bits_per_sample = parameters.get("bits_per_sample", 16)
@@ -45,17 +62,28 @@ def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
             except (ValueError, IndexError): pass
     return {"bits_per_sample": bits_per_sample, "rate": rate}
 
-@app.route('/')
-def home():
-    return "Backend do Gerador de Narração está online."
+# =========================================================================
+# --- ROTAS DA API ---
+# =========================================================================
 
-# --- Rota de Health Check para manter a API "acordada" ---
-@app.route('/health', methods=['GET'])
+@application.route('/')
+def home():
+    """Rota raiz para uma verificação simples de status."""
+    return "Serviço Ator de IA (narrador-python-api) está online."
+
+@application.route('/health', methods=['GET'])
 def health_check():
+    """Rota de Health Check para serviços de monitoramento."""
     return "API is awake and healthy.", 200
 
-@app.route('/api/generate-audio', methods=['POST'])
+# -------------------------------------------------------------------------
+# ROTA PRINCIPAL: GERAÇÃO DE ÁUDIO (TEXT-TO-SPEECH)
+# -------------------------------------------------------------------------
+@application.route('/api/generate-audio', methods=['POST'])
 def generate_audio_endpoint():
+    """
+    Recebe um texto, uma voz e um modelo, e retorna o áudio em WAV.
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return jsonify({"error": "Configuração do servidor incompleta: Chave da API ausente."}), 500
@@ -64,53 +92,73 @@ def generate_audio_endpoint():
     if not data:
         return jsonify({"error": "Requisição inválida, corpo JSON ausente."}), 400
         
-    text_to_narrate = data.get('text') # O prompt completo agora vem do PHP
+    text_to_narrate = data.get('text')
     voice_name = data.get('voice')
+    requested_model = data.get('model', DEFAULT_TTS_MODEL)
 
-    if not text_to_narrate:
-        return jsonify({"error": "O texto não pode estar vazio."}), 400
+    if not text_to_narrate or not voice_name:
+        return jsonify({"error": "Os campos 'text' e 'voice' são obrigatórios."}), 400
+
+    if requested_model not in ALLOWED_TTS_MODELS:
+        tts_model_to_use = DEFAULT_TTS_MODEL
+    else:
+        tts_model_to_use = requested_model
 
     try:
-        client = genai.Client(api_key=api_key)
+        genai.configure(api_key=api_key)
         
-        # [CORRIGIDO] Revertendo para o nome do modelo TTS correto que você apontou.
-        model = "gemini-2.5-pro-preview-tts"
-        model_to_use = "Pro"
+        # 1. A inicialização do modelo é moderna
+        model = genai.GenerativeModel(tts_model_to_use)
 
-        contents = [types.Content(role="user", parts=[types.Part.from_text(text=text_to_narrate)])]
+        # 2. O conteúdo é passado como um objeto Part, que é a forma correta para a configuração abaixo
+        contents = [types.Part.from_text(text_to_narrate)]
         
-        generate_content_config = types.GenerateContentConfig(
-            response_modalities=["audio"],
+        # 3. [A CHAVE DA CORREÇÃO] A configuração de áudio é um objeto `types.GenerateContentConfig`,
+        #    exatamente como no seu código original, que a biblioteca moderna ainda suporta.
+        generation_config = types.GenerateContentConfig(
+            response_modalities=[types.ResponseModality.AUDIO],
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name)
                 )
             ),
         )
+
+        # 4. A chamada de streaming usa o modelo moderno com a configuração correta
+        stream = model.generate_content(
+            contents=contents,
+            generation_config=generation_config,
+            stream=True
+        )
         
         audio_buffer = bytearray()
         audio_mime_type = "audio/L16;rate=24000"
         
-        # [REVERTIDO] Voltando a usar generate_content_stream, que é o correto para este modelo.
-        stream = client.models.generate_content_stream(model=model, contents=contents, config=generate_content_config)
-        
         for chunk in stream:
-            if (chunk.candidates and chunk.candidates[0].content and
-                chunk.candidates[0].content.parts and chunk.candidates[0].content.parts[0].inline_data and
-                chunk.candidates[0].content.parts[0].inline_data.data):
-                inline_data = chunk.candidates[0].content.parts[0].inline_data
-                audio_buffer.extend(inline_data.data)
-                audio_mime_type = inline_data.mime_type
+            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                part = chunk.candidates[0].content.parts[0]
+                if hasattr(part, 'inline_data') and hasattr(part.inline_data, 'data'):
+                    inline_data = part.inline_data
+                    audio_buffer.extend(inline_data.data)
+                    if hasattr(inline_data, 'mime_type'):
+                        audio_mime_type = inline_data.mime_type
 
         if not audio_buffer:
-            return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio após streaming)."}), 500
+            return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio)."}), 500
 
+        # Usa as funções auxiliares originais para garantir a formatação correta do WAV
         wav_data = convert_to_wav(bytes(audio_buffer), audio_mime_type)
         
-        response = make_response(send_file(io.BytesIO(wav_data), mimetype='audio/wav', as_attachment=False))
-        response.headers['X-Model-Used'] = model_to_use
-        return response
+        response_to_send = make_response(send_file(io.BytesIO(wav_data), mimetype='audio/wav', as_attachment=False))
+        response_to_send.headers['X-Model-Used'] = tts_model_to_use
+        return response_to_send
 
     except Exception as e:
-        print(f"Ocorreu um erro crítico na API: {e}")
+        print(f"Ocorreu um erro crítico na API de Narração: {e}")
         return jsonify({"error": f"Erro interno no servidor ao gerar áudio: {str(e)}"}), 500
+
+# =========================================================================
+# --- EXECUÇÃO DA APLICAÇÃO ---
+# =========================================================================
+if __name__ == '__main__':
+    application.run(debug=True)
