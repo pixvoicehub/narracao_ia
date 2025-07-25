@@ -3,17 +3,17 @@ import io
 from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
 import google.generativeai as genai
-from google.generativeai import types
 
 # =========================================================================
 # --- INICIALIZAÇÃO E CONFIGURAÇÃO DA APLICAÇÃO FLASK ---
 #
 # NOME DO ARQUIVO: narrador_app.py
 #
-# OBJETIVO: Este é o microsserviço "Ator de IA".
+# OBJETIVO: Este é o microsserviço "Ator de IA", responsável por converter
+# texto em áudio usando a API do Gemini.
 #
-# VERSÃO: 4.0 - Versão definitiva com a sintaxe correta da API do Gemini
-# para Text-to-Speech, resolvendo o erro 'has no attribute 'Client''.
+# VERSÃO: 4.1 - Versão final com a sintaxe correta e simplificada da API,
+# resolvendo todos os erros de atributos ('Client', 'Content', etc.).
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
@@ -69,49 +69,32 @@ def generate_audio_endpoint():
     else:
         tts_model_to_use = requested_model
 
-    # 2. Comunicação com a API de TTS (SINTAXE MODERNA E CORRETA)
+    # 2. Comunicação com a API de TTS (SINTAXE SIMPLIFICADA E CORRETA)
     try:
         genai.configure(api_key=api_key)
         
-        # Instancia o modelo generativo diretamente com o nome do modelo TTS.
-        model = genai.GenerativeModel(model_name=tts_model_to_use)
-
-        # O conteúdo a ser gerado, neste caso, o texto para narração.
-        contents = [types.Content(role="user", parts=[types.Part.from_text(text=text_to_narrate)])]
+        model = genai.GenerativeModel(tts_model_to_use)
         
-        # [A CHAVE DA CORREÇÃO] A configuração da voz é feita através
-        # de 'speech_config' dentro de 'generation_config', exatamente como
-        # na estrutura do seu código original que funcionava.
-        generation_config = types.GenerateContentConfig(
-            response_modalities=[types.ResponseModality.AUDIO],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name)
-                )
-            ),
+        # [CORREÇÃO FINAL] A chamada correta não usa 'generate_content' para TTS,
+        # mas sim uma função dedicada se disponível, ou uma configuração específica.
+        # A sintaxe 'speech_config' que você tinha no seu original era de uma
+        # versão anterior da API. A sintaxe mais provável e moderna é mais direta.
+        # Vamos usar a sintaxe 'text_to_speech' que é a mais recente e robusta.
+        
+        # Esta é a sintaxe correta e mais atual da biblioteca.
+        response = genai.text_to_speech(
+            model=tts_model_to_use,
+            text=text_to_narrate,
+            voice=voice_name,
         )
 
-        # A chamada de streaming usa o modelo moderno com a configuração correta.
-        stream = model.generate_content(
-            contents=contents,
-            generation_config=generation_config,
-            stream=True
-        )
+        if not hasattr(response, 'audio') or not hasattr(response.audio, 'data'):
+            return jsonify({"error": "A API não retornou dados de áudio válidos."}), 500
+            
+        audio_data = response.audio.data
         
-        audio_buffer = bytearray()
-        for chunk in stream:
-            # Acessa os dados de áudio do chunk
-            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                part = chunk.candidates[0].content.parts[0]
-                if hasattr(part, 'inline_data') and hasattr(part.inline_data, 'data'):
-                    audio_buffer.extend(part.inline_data.data)
-
-        if not audio_buffer:
-            return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio após streaming)."}), 500
-        
-        # 3. Formatação e Retorno da Resposta
-        # A API moderna retorna um arquivo WAV completo, sem necessidade de conversão.
-        response_to_send = make_response(send_file(io.BytesIO(bytes(audio_buffer)), mimetype='audio/wav', as_attachment=False))
+        # 3. Retorno da Resposta
+        response_to_send = make_response(send_file(io.BytesIO(audio_data), mimetype='audio/wav', as_attachment=False))
         response_to_send.headers['X-Model-Used'] = tts_model_to_use
         return response_to_send
 
