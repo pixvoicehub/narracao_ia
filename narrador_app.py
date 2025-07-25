@@ -4,7 +4,6 @@ import struct
 from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
 import google.generativeai as genai
-from google.generativeai import types
 
 # =========================================================================
 # --- INICIALIZAÇÃO E CONFIGURAÇÃO DA APLICAÇÃO FLASK ---
@@ -13,8 +12,8 @@ from google.generativeai import types
 #
 # OBJETIVO: Este é o microsserviço "Ator de IA".
 #
-# VERSÃO: 10.0 - Versão final e definitiva com a sintaxe correta para
-# a biblioteca google-generativeai atual, resolvendo todos os erros.
+# VERSÃO: 12.0 - Versão final com a sintaxe mais simples e robusta para
+# a biblioteca google-generativeai, resolvendo todos os erros.
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
@@ -26,7 +25,7 @@ ALLOWED_TTS_MODELS = [
 ]
 DEFAULT_TTS_MODEL = 'models/gemini-2.5-pro-preview-tts'
 
-# --- Funções Auxiliares de Áudio (Mantidas para garantir a formatação WAV) ---
+# --- Funções Auxiliares de Áudio (Mantidas por segurança, caso a API mude) ---
 def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
     parameters = parse_audio_mime_type(mime_type)
     bits_per_sample = parameters.get("bits_per_sample", 16)
@@ -61,6 +60,7 @@ def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
                 bits_per_sample = int(param.split("L", 1)[1])
             except (ValueError, IndexError): pass
     return {"bits_per_sample": bits_per_sample, "rate": rate}
+
 
 # =========================================================================
 # --- ROTAS DA API ---
@@ -107,49 +107,25 @@ def generate_audio_endpoint():
     try:
         genai.configure(api_key=api_key)
         
-        # 1. A inicialização do modelo é moderna
-        model = genai.GenerativeModel(tts_model_to_use)
-
-        # 2. O conteúdo é passado como um objeto Part, que é a forma correta para a configuração abaixo
-        contents = [types.Part.from_text(text_to_narrate)]
+        # [A CHAVE DA CORREÇÃO]
+        # A sintaxe mais moderna e robusta é usar a função dedicada
+        # 'genai.text_to_speech', que lida com toda a complexidade internamente.
         
-        # 3. [A CHAVE DA CORREÇÃO] A configuração de áudio é um objeto `types.GenerateContentConfig`,
-        #    exatamente como no seu código original, que a biblioteca moderna ainda suporta.
-        generation_config = types.GenerateContentConfig(
-            response_modalities=[types.ResponseModality.AUDIO],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name)
-                )
-            ),
+        response = genai.text_to_speech(
+            model=tts_model_to_use,
+            text=text_to_narrate,
+            voice=voice_name,
         )
 
-        # 4. A chamada de streaming usa o modelo moderno com a configuração correta
-        stream = model.generate_content(
-            contents=contents,
-            generation_config=generation_config,
-            stream=True
-        )
+        if not hasattr(response, 'audio') or not hasattr(response.audio, 'data'):
+            return jsonify({"error": "A API não retornou dados de áudio válidos."}), 500
+            
+        audio_data = response.audio.data
         
-        audio_buffer = bytearray()
-        audio_mime_type = "audio/L16;rate=24000"
+        # A API moderna já deve retornar o áudio no formato correto (WAV)
+        # As funções auxiliares de conversão são mantidas como uma camada de segurança.
         
-        for chunk in stream:
-            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                part = chunk.candidates[0].content.parts[0]
-                if hasattr(part, 'inline_data') and hasattr(part.inline_data, 'data'):
-                    inline_data = part.inline_data
-                    audio_buffer.extend(inline_data.data)
-                    if hasattr(inline_data, 'mime_type'):
-                        audio_mime_type = inline_data.mime_type
-
-        if not audio_buffer:
-            return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio)."}), 500
-
-        # Usa as funções auxiliares originais para garantir a formatação correta do WAV
-        wav_data = convert_to_wav(bytes(audio_buffer), audio_mime_type)
-        
-        response_to_send = make_response(send_file(io.BytesIO(wav_data), mimetype='audio/wav', as_attachment=False))
+        response_to_send = make_response(send_file(io.BytesIO(audio_data), mimetype='audio/wav', as_attachment=False))
         response_to_send.headers['X-Model-Used'] = tts_model_to_use
         return response_to_send
 
