@@ -1,5 +1,4 @@
 import os
-import struct
 import io
 from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
@@ -14,7 +13,7 @@ from google.generativeai import types
 # OBJETIVO: Este é o microsserviço "Ator de IA".
 #
 # VERSÃO: 5.0 - Versão definitiva que combina a inicialização moderna
-# com a estrutura de configuração de streaming original para compatibilidade.
+# com a estrutura de configuração de streaming correta para a API atual.
 # =========================================================================
 application = Flask(__name__)
 CORS(application, origins="*", expose_headers=['X-Model-Used'])
@@ -25,42 +24,6 @@ ALLOWED_TTS_MODELS = [
     'models/gemini-2.5-flash-preview-tts'
 ]
 DEFAULT_TTS_MODEL = 'models/gemini-2.5-pro-preview-tts'
-
-# --- Funções Auxiliares de Áudio (do seu código original funcional) ---
-def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
-    parameters = parse_audio_mime_type(mime_type)
-    bits_per_sample = parameters.get("bits_per_sample", 16)
-    sample_rate = parameters.get("rate", 24000)
-    num_channels = 1
-    data_size = len(audio_data)
-    bytes_per_sample = bits_per_sample // 8
-    block_align = num_channels * bytes_per_sample
-    byte_rate = sample_rate * block_align
-    chunk_size = 36 + data_size
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", chunk_size, b"WAVE", b"fmt ", 16, 1,
-        num_channels, sample_rate, byte_rate, block_align,
-        bits_per_sample, b"data", data_size
-    )
-    return header + audio_data
-
-def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
-    bits_per_sample = 16
-    rate = 24000
-    parts = mime_type.split(";")
-    for param in parts:
-        param = param.strip()
-        if param.lower().startswith("rate="):
-            try:
-                rate_str = param.split("=", 1)[1]
-                rate = int(rate_str)
-            except (ValueError, IndexError): pass
-        elif param.startswith("audio/L"):
-            try:
-                bits_per_sample = int(param.split("L", 1)[1])
-            except (ValueError, IndexError): pass
-    return {"bits_per_sample": bits_per_sample, "rate": rate}
 
 # =========================================================================
 # --- ROTAS DA API ---
@@ -107,13 +70,13 @@ def generate_audio_endpoint():
     try:
         genai.configure(api_key=api_key)
         
-        # [CORREÇÃO 1] A inicialização do modelo é moderna.
+        # 1. A inicialização do modelo é moderna.
         model = genai.GenerativeModel(tts_model_to_use)
 
-        # [CORREÇÃO 2] O conteúdo é preparado da forma que a configuração de stream espera.
-        contents = [types.Part.from_text(text_to_narrate)]
+        # 2. [A CHAVE DA CORREÇÃO] O conteúdo é passado diretamente, sem 'types.Part' ou 'types.Content'.
+        contents = [text_to_narrate]
         
-        # [CORREÇÃO 3] A configuração de áudio é exatamente a que você tinha no seu código original,
+        # 3. A configuração de áudio é a que você tinha no seu código original,
         # que é a correta para esta versão da biblioteca.
         generation_config = types.GenerateContentConfig(
             response_modalities=[types.ResponseModality.AUDIO],
@@ -124,7 +87,7 @@ def generate_audio_endpoint():
             ),
         )
 
-        # [CORREÇÃO 4] A chamada de streaming usa o modelo moderno com a configuração correta.
+        # 4. A chamada de streaming usa o modelo moderno com a configuração correta.
         stream = model.generate_content(
             contents=contents,
             generation_config=generation_config,
@@ -132,22 +95,19 @@ def generate_audio_endpoint():
         )
         
         audio_buffer = bytearray()
-        audio_mime_type = "audio/L16;rate=24000"
         
         for chunk in stream:
+            # Acessa os dados de áudio do chunk de forma segura
             if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
                 part = chunk.candidates[0].content.parts[0]
                 if hasattr(part, 'inline_data') and hasattr(part.inline_data, 'data'):
-                    inline_data = part.inline_data
-                    audio_buffer.extend(inline_data.data)
-                    if hasattr(inline_data, 'mime_type'):
-                        audio_mime_type = inline_data.mime_type
+                    audio_buffer.extend(part.inline_data.data)
 
         if not audio_buffer:
             return jsonify({"error": "Não foi possível gerar o áudio (buffer vazio após streaming)."}), 500
 
-        # Usa as funções auxiliares originais para garantir a formatação correta
-        wav_data = convert_to_wav(bytes(audio_buffer), audio_mime_type)
+        # A API moderna retorna um arquivo WAV completo.
+        wav_data = bytes(audio_buffer)
         
         response_to_send = make_response(send_file(io.BytesIO(wav_data), mimetype='audio/wav', as_attachment=False))
         response_to_send.headers['X-Model-Used'] = tts_model_to_use
